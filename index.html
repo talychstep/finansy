@@ -622,9 +622,55 @@ async function sync(){
       await g(UP+'?uploadType=multipart',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+bd},
         body:`--${bd}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name:MAIN,parents:[fid],mimeType:'application/json'})}\r\n--${bd}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${bd}--`})}
     persistAll();LS('fin-dirty',null);LS('fin-synced',String(Date.now()));
+    try{await exportExcel(fid,files)}catch(e){if(e&&e.auth)throw e;console.warn('excel',e)}
     status('ok',n);if(!ov.classList.contains('open'))render();
   }catch(e){status(e&&e.auth?'login':'err')}
   finally{syncing=false;if(again){again=false;setTimeout(sync,400)}}
+}
+/* ---------- Excel-копии на Google Диске ---------- */
+const XMIME='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+function hsh(str){let h=5381;for(let i=0;i<str.length;i++)h=(h*33^str.charCodeAt(i))>>>0;return h.toString(36)}
+function loadXLSX(){if(window.XLSX)return Promise.resolve();return new Promise((res,rej)=>{const sc=document.createElement('script');sc.src='xlsx.mini.min.js';sc.onload=res;sc.onerror=rej;document.head.appendChild(sc)})}
+const ruDate=iso=>iso?iso.slice(8,10)+'.'+iso.slice(5,7)+'.'+iso.slice(0,4):'';
+const r2=n=>Math.round((+n||0)*100)/100;
+function sheet(rows,widths){const ws=XLSX.utils.aoa_to_sheet(rows);if(widths)ws['!cols']=widths.map(w=>({wch:w}));return ws}
+function bookFinance(){
+  const wb=XLSX.utils.book_new(),tx=Object.values(S.months).flat().filter(t=>t&&t.d).sort((a,b)=>a.d.localeCompare(b.d)||(a.ts||0)-(b.ts||0));
+  const loanName=id=>(S.loans.find(l=>l.id===id)||{}).name||'';
+  XLSX.utils.book_append_sheet(wb,sheet([['Дата','Месяц','Тип','Категория','Сумма, ₸','Комментарий','Кредит']].concat(tx.map(t=>[ruDate(t.d),ymLabel(ymOf(t.d)),t.t==='i'?'Доход':'Расход',t.c,r2(t.a),t.n||'',t.loan?loanName(t.loan):''])),[12,16,9,22,13,40,26]),'Операции');
+  const yms=[...new Set(tx.map(t=>ymOf(t.d)))].sort();
+  const mrows=yms.map(ym=>{const L=tx.filter(t=>ymOf(t.d)===ym),i=L.filter(t=>t.t==='i').reduce((s,t)=>s+t.a,0),e=L.filter(t=>t.t==='e').reduce((s,t)=>s+t.a,0);return[ymLabel(ym),r2(i),r2(e),r2(i-e)]});
+  XLSX.utils.book_append_sheet(wb,sheet([['Месяц','Доходы, ₸','Расходы, ₸','Остаток, ₸']].concat(mrows),[16,14,14,14]),'Итоги по месяцам');
+  const cats=[...new Set(tx.filter(t=>t.t==='e').map(t=>t.c))];
+  const crow=c=>{const v=yms.map(ym=>r2(tx.filter(t=>t.t==='e'&&t.c===c&&ymOf(t.d)===ym).reduce((s,t)=>s+t.a,0)));return[c,...v,r2(v.reduce((a,b)=>a+b,0))]};
+  XLSX.utils.book_append_sheet(wb,sheet([['Категория',...yms.map(ymLabel),'Итого']].concat(cats.map(crow).sort((a,b)=>b[b.length-1]-a[a.length-1])),[22,...yms.map(()=>14),14]),'Расходы по категориям');
+  const ls=S.loans.slice().sort((a,b)=>(b.balance||0)-(a.balance||0));
+  XLSX.utils.book_append_sheet(wb,sheet([['Кредит','Кредитор','Ставка, %','Остаток, ₸','Платёж в месяц, ₸','День платежа','Окончание']].concat(ls.map(l=>[l.name,l.lender||'',r2(l.rate),r2(l.balance),r2(l.payment),l.day||'',ruDate(l.end)])).concat([['Итого','','',r2(ls.reduce((s,l)=>s+(l.balance||0),0)),r2(ls.filter(l=>l.balance>0).reduce((s,l)=>s+(l.payment||0),0)),'','']]),[30,18,10,14,16,13,12]),'Кредиты');
+  XLSX.utils.book_append_sheet(wb,sheet([['Платёж','Категория','Сумма, ₸','Как часто','День']].concat(S.bills.map(b=>[b.name,b.cat||'',r2(b.amount),PER[b.per||'m'],b.day||''])),[26,20,12,16,8]),'Обязательные платежи');
+  return wb;
+}
+function bookTaxes(y){
+  const wb=XLSX.utils.book_new(),rows=taxRows(y);
+  const h1=['Налоги за '+y,'КНП','КНП пени'],h2=['','',''];MN.forEach(m=>{h1.push(m,'');h2.push('начислено','оплачено')});h1.push('Итого','','');h2.push('начислено','оплачено','долг');
+  const body=rows.map(t=>{const r=[t.name,t.knp||'',t.pknp||''];let c=0,p=0;for(let i=0;i<12;i++){const x=cellOf(t,i);r.push(x.c?r2(x.c):'',x.p?r2(x.p):'');c+=x.c||0;p+=x.p||0}r.push(r2(c),r2(p),r2(c-p));return r});
+  const tot=['Итого','',''];for(let k=3;k<h1.length;k++)tot.push(r2(body.reduce((s,r)=>s+(+r[k]||0),0))||'');
+  const ws=sheet([h1,h2,...body,tot],[46,6,9,...Array(24).fill(11),12,12,12]);
+  ws['!merges']=MN.map((m,i)=>({s:{r:0,c:3+i*2},e:{r:0,c:4+i*2}})).concat([{s:{r:0,c:27},e:{r:0,c:29}}]);
+  XLSX.utils.book_append_sheet(wb,ws,'Налоги '+y);
+  return wb;
+}
+async function putXlsx(fid,files,name,wb){
+  const ab=XLSX.write(wb,{bookType:'xlsx',type:'array'}),f=files.find(x=>x.name===name);
+  if(f){await g(UP+'/'+f.id+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':XMIME},body:ab});return}
+  const bd='finx'+Date.now(),head=`--${bd}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name,parents:[fid],mimeType:XMIME})}\r\n--${bd}\r\nContent-Type: ${XMIME}\r\n\r\n`;
+  await g(UP+'?uploadType=multipart',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+bd},body:new Blob([head,ab,`\r\n--${bd}--`])});
+}
+async function exportExcel(fid,files){
+  const d=toDoc();delete d.saved;delete d.inboxDone;const h=hsh(JSON.stringify(d));if(LS('fin-xlsx')===h)return;
+  await loadXLSX();
+  await putXlsx(fid,files,'Доходы и расходы.xlsx',bookFinance());
+  for(const y of[...new Set(S.taxes.map(t=>String(t.year)))])await putXlsx(fid,files,'Налоги '+y+'.xlsx',bookTaxes(y));
+  LS('fin-xlsx',h);
 }
 function trySilent(){if(!gOn()||tok||!LS('fin-was')||authErr)return false;const last=+LS('fin-silent-at')||0;if(Date.now()-last<10*60e3)return false;LS('fin-silent-at',String(Date.now()));login(true);return true}
 document.addEventListener('click',e=>{if(e.target.closest('#gLogin'))login(false);else if(e.target.closest('#gSync'))sync()});

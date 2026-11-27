@@ -223,9 +223,27 @@ function sim(extra,strategy,roll){
 
 /* ---------- экраны ---------- */
 function monthNav(){return`<div class="mnav"><button data-m="-1" aria-label="Предыдущий месяц">‹</button><b>${ymLabel(S.cur)}</b><button data-m="1" aria-label="Следующий месяц">›</button></div>`}
+const JAR_IN='Накопления',JAR_OUT='Из запаса';
+const allTx=()=>Object.values(S.months).flat().filter(Boolean);
+const jarBal=()=>allTx().reduce((s,t)=>s+(t.t==='e'&&t.c===JAR_IN?t.a:t.t==='i'&&t.c===JAR_OUT?-t.a:0),0);
+const jarGoal=()=>+S.settings.jarGoal||1000000;
+function jarCard(){
+  const b=jarBal(),g=jarGoal(),pc=Math.max(0,Math.min(100,b/g*100)),inc=txOf(S.cur).filter(t=>t.t==='i'&&t.c!==JAR_OUT).reduce((s,t)=>s+t.a,0);
+  return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px"><h2 style="margin:0">Запас</h2><button class="btn sm" data-jargoal>Цель: ${fmt(g)}</button></div>
+   <div class="hero" style="font-size:clamp(28px,8vw,36px);margin-top:8px">${fmt(b)}</div>
+   <div class="bar" style="height:10px"><i style="width:${pc.toFixed(1)}%;background:var(--good)"></i></div>
+   <p class="lbl" style="margin-top:6px">${b>=g?'Цель достигнута — теперь 10% от дохода направляйте в досрочное погашение.':`Собрано ${Math.round(pc)}% · осталось ${fmt(g-b)}`}${inc&&b<g?` · 10% от доходов за месяц: ${fmt(inc*0.1)}`:''}</p>
+   <div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm primary" data-jar="in" style="flex:1">Отложить</button><button class="btn sm" data-jar="out" style="flex:1">Взять из запаса</button></div></div>`;
+}
+function jarGoalForm(){
+  F={};open(`<h3><span>Цель запаса</span><span class="hb"><button class="btn sm primary" data-do="jgS">Сохранить</button><button class="x" aria-label="Закрыть">×</button></span></h3>
+   <label class="f">Сколько хотите иметь в запасе, ₸<input id="jgA" inputmode="decimal" value="${NF.format(jarGoal())}"></label>
+   <p class="lbl" style="margin:-4px 0 12px">Рекомендация: сумма обязательных платежей за 1 месяц.</p>
+   <div class="acts"><button class="btn primary" id="jgS">Сохранить</button></div>`);
+}
 function home(){
-  const tx=txOf(S.cur),inc=tx.filter(t=>t.t==='i').reduce((s,t)=>s+t.a,0),exp=tx.filter(t=>t.t==='e').reduce((s,t)=>s+t.a,0),bal=inc-exp;
-  const by={};tx.filter(t=>t.t==='e').forEach(t=>by[t.c]=(by[t.c]||0)+t.a);
+  const tx=txOf(S.cur),isJ=t=>(t.t==='e'&&t.c===JAR_IN)||(t.t==='i'&&t.c===JAR_OUT),inc=tx.filter(t=>t.t==='i'&&!isJ(t)).reduce((s,t)=>s+t.a,0),exp=tx.filter(t=>t.t==='e'&&!isJ(t)).reduce((s,t)=>s+t.a,0),jn=tx.filter(isJ).reduce((s,t)=>s+(t.t==='e'?t.a:-t.a),0),bal=inc-exp-jn;
+  const by={};tx.filter(t=>t.t==='e'&&!isJ(t)).forEach(t=>by[t.c]=(by[t.c]||0)+t.a);
   const cats=Object.entries(by).sort((a,b)=>b[1]-a[1]),max=cats.length?cats[0][1]:1;
   const pay=[...S.loans.filter(l=>l.payment>0&&l.balance>0).map(l=>({k:'pay',id:l.id,name:l.name,day:l.day,amt:Math.min(l.payment,l.balance),paid:tx.filter(t=>t.loan===l.id).reduce((s,t)=>s+t.a,0)})),
     ...S.bills.filter(b=>isDue(b,S.cur)).map(b=>({k:'paybill',id:b.id,name:b.name,day:b.day,amt:b.amount||0,paid:paidFor(b,S.cur)}))].sort((a,b)=>(a.day||99)-(b.day||99));
@@ -233,7 +251,8 @@ function home(){
   const debt=totalDebt(),plan=S.loans.length?sim(S.settings.extra||0,S.settings.strategy,true):null;
   return bkBanner()+monthNav()+`
   <div class="card"><p class="lbl">Остаток за месяц</p><div class="hero ${bal<0?'neg':''}">${bal>0?'+':''}${fmt(bal)}</div>
-   <div class="two"><div><p class="lbl">Доходы</p><b class="pos">${fmt(inc)}</b></div><div><p class="lbl">Расходы</p><b>${fmt(exp)}</b></div></div></div>
+   <div class="two"><div><p class="lbl">Доходы</p><b class="pos">${fmt(inc)}</b></div><div><p class="lbl">Расходы</p><b>${fmt(exp)}</b></div></div>${jn?`<p class="lbl" style="margin-top:8px">${jn>0?'Отложено в запас':'Взято из запаса'} за месяц: ${fmt(Math.abs(jn))}</p>`:''}</div>
+  ${jarCard()}
   <div class="card"><h2>Обязательные платежи месяца</h2>${pay.length?`<p class="lbl" style="margin:-4px 0 6px">Всего ${fmt(due)} · осталось оплатить <b style="color:var(--ink)">${fmt(left)}</b></p>`+pay.map(p=>`<div class="row"><div class="grow">${esc(p.name)}<small>${p.day?p.day+' число · ':''}${fmt(p.amt)}</small></div>${p.paid?`<span class="paid">✓ ${fmt(p.paid)}</span>`:`<button class="btn sm" data-${p.k}="${esc(p.id)}">Оплатить</button>`}</div>`).join(''):'<p class="empty">Добавьте кредиты во вкладке «Долги», а алименты, аренду, коммуналку и налоги — во вкладке «Платежи».</p>'}</div>
   <div class="card"><h2>Куда ушли деньги</h2>${cats.length?cats.map(([c,v])=>`<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px"><span>${esc(c)}</span><span class="amt">${fmt(v)} <small style="display:inline">${Math.round(v/exp*100)}%</small></span></div><div class="bar"><i style="width:${(v/max*100).toFixed(1)}%"></i></div></div>`).join(''):'<p class="empty">Пока нет расходов за этот месяц. Нажмите «+», чтобы записать первый.</p>'}</div>
   <div class="card"><p class="lbl">Общий долг</p><div class="hero" style="font-size:clamp(28px,8vw,36px)">${fmt(debt)}</div>
@@ -501,6 +520,8 @@ $('#view').addEventListener('click',e=>{
   const p=e.target.closest('[data-pay]');if(p){payForm(p.dataset.pay);return}
   const l=e.target.closest('[data-loan]');if(l){loanForm(l.dataset.loan);return}
   if(e.target.closest('#addLoan')){loanForm();return}
+  const jr=e.target.closest('[data-jar]');if(jr){const out=jr.dataset.jar==='out';if(out&&!S.settings.inc.includes(JAR_OUT)){addCat(JAR_OUT,'inc');saveSettings()}txForm({t:out?'i':'e',c:out?JAR_OUT:JAR_IN});return}
+  if(e.target.closest('[data-jargoal]')){jarGoalForm();return}
   const tc=e.target.closest('[data-tc]');if(tc){const[a,b]=tc.dataset.tc.split('|');taxForm(a,+b);return}
   const pb=e.target.closest('[data-paybill]');if(pb){payBill(pb.dataset.paybill);return}
   const bb=e.target.closest('[data-bill]');if(bb){billForm(bb.dataset.bill);return}
@@ -525,6 +546,7 @@ sh.addEventListener('click',e=>{
   const per=e.target.closest('[data-per]');if(per){F.per=per.dataset.per;paintPer();return}
   if(e.target.closest('#bS'))return saveBill();
   if(e.target.closest('#tS'))return saveTaxCell();
+  if(e.target.closest('#jgS')){const v=Math.round(num($('#jgA').value));if(v>0){S.settings.jarGoal=v;saveSettings()}close();render();return}
   if(e.target.closest('#tFull')){$('#tP').value=$('#tC').value;return}
   if(e.target.closest('#bDel'))return delBill();
   const rm=e.target.closest('[data-rm]');if(rm){const k=rm.dataset.rm;S.settings[k]=S.settings[k].filter(c=>c!==rm.dataset.c);saveSettings();settingsForm();return}
@@ -639,13 +661,15 @@ function bookFinance(){
   const loanName=id=>(S.loans.find(l=>l.id===id)||{}).name||'';
   XLSX.utils.book_append_sheet(wb,sheet([['Дата','Месяц','Тип','Категория','Сумма, ₸','Комментарий','Кредит']].concat(tx.map(t=>[ruDate(t.d),ymLabel(ymOf(t.d)),t.t==='i'?'Доход':'Расход',t.c,r2(t.a),t.n||'',t.loan?loanName(t.loan):''])),[12,16,9,22,13,40,26]),'Операции');
   const yms=[...new Set(tx.map(t=>ymOf(t.d)))].sort();
-  const mrows=yms.map(ym=>{const L=tx.filter(t=>ymOf(t.d)===ym),i=L.filter(t=>t.t==='i').reduce((s,t)=>s+t.a,0),e=L.filter(t=>t.t==='e').reduce((s,t)=>s+t.a,0);return[ymLabel(ym),r2(i),r2(e),r2(i-e)]});
-  XLSX.utils.book_append_sheet(wb,sheet([['Месяц','Доходы, ₸','Расходы, ₸','Остаток, ₸']].concat(mrows),[16,14,14,14]),'Итоги по месяцам');
-  const cats=[...new Set(tx.filter(t=>t.t==='e').map(t=>t.c))];
+  const mrows=yms.map(ym=>{const isJ=t=>(t.t==='e'&&t.c===JAR_IN)||(t.t==='i'&&t.c===JAR_OUT),L=tx.filter(t=>ymOf(t.d)===ym),i=L.filter(t=>t.t==='i'&&!isJ(t)).reduce((s,t)=>s+t.a,0),e=L.filter(t=>t.t==='e'&&!isJ(t)).reduce((s,t)=>s+t.a,0),j=L.filter(isJ).reduce((s,t)=>s+(t.t==='e'?t.a:-t.a),0);return[ymLabel(ym),r2(i),r2(e),r2(j),r2(i-e-j)]});
+  XLSX.utils.book_append_sheet(wb,sheet([['Месяц','Доходы, ₸','Расходы, ₸','В запас, ₸','Остаток, ₸']].concat(mrows),[16,14,14,12,14]),'Итоги по месяцам');
+  const cats=[...new Set(tx.filter(t=>t.t==='e'&&t.c!==JAR_IN).map(t=>t.c))];
   const crow=c=>{const v=yms.map(ym=>r2(tx.filter(t=>t.t==='e'&&t.c===c&&ymOf(t.d)===ym).reduce((s,t)=>s+t.a,0)));return[c,...v,r2(v.reduce((a,b)=>a+b,0))]};
   XLSX.utils.book_append_sheet(wb,sheet([['Категория',...yms.map(ymLabel),'Итого']].concat(cats.map(crow).sort((a,b)=>b[b.length-1]-a[a.length-1])),[22,...yms.map(()=>14),14]),'Расходы по категориям');
   const ls=S.loans.slice().sort((a,b)=>(b.balance||0)-(a.balance||0));
   XLSX.utils.book_append_sheet(wb,sheet([['Кредит','Кредитор','Ставка, %','Остаток, ₸','Платёж в месяц, ₸','День платежа','Окончание']].concat(ls.map(l=>[l.name,l.lender||'',r2(l.rate),r2(l.balance),r2(l.payment),l.day||'',ruDate(l.end)])).concat([['Итого','','',r2(ls.reduce((s,l)=>s+(l.balance||0),0)),r2(ls.filter(l=>l.balance>0).reduce((s,l)=>s+(l.payment||0),0)),'','']]),[30,18,10,14,16,13,12]),'Кредиты');
+  {let bal=0;const jr=tx.filter(t=>(t.t==='e'&&t.c===JAR_IN)||(t.t==='i'&&t.c===JAR_OUT)).map(t=>{const v=t.t==='e'?t.a:-t.a;bal+=v;return[ruDate(t.d),v>0?'Отложено':'Взято',r2(v),r2(bal),t.n||'']});
+   XLSX.utils.book_append_sheet(wb,sheet([['Дата','Операция','Сумма, ₸','Баланс запаса, ₸','Комментарий']].concat(jr).concat([[],['Цель запаса','',r2(jarGoal()),'','']]),[12,12,13,16,30]),'Запас')}
   XLSX.utils.book_append_sheet(wb,sheet([['Платёж','Категория','Сумма, ₸','Как часто','День']].concat(S.bills.map(b=>[b.name,b.cat||'',r2(b.amount),PER[b.per||'m'],b.day||''])),[26,20,12,16,8]),'Обязательные платежи');
   return wb;
 }

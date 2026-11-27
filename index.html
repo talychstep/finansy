@@ -83,6 +83,12 @@ input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid 
 .acts{display:flex;gap:10px;margin-top:6px}.acts .primary{flex:1}
 .acts{flex-wrap:wrap}.ferr{flex-basis:100%;color:var(--acc);font-weight:600;margin:0;font-size:15px}.ferr:empty{display:none}
 .chips.need button{border-color:var(--acc)}
+.mgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:3px;margin:10px 0 6px}
+.mc{height:36px;border-radius:7px;border:1px solid var(--line);background:var(--soft);color:var(--mute);font-size:10.5px;padding:0;cursor:pointer;font-weight:600}
+.mc.paid{background:var(--good);color:#fff;border-color:transparent}.mc.due{background:var(--acc);color:#fff;border-color:transparent}
+.mc.part{background:linear-gradient(180deg,var(--good) 50%,var(--acc) 50%);color:#fff;border-color:transparent}
+.legend2{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--mute)}.legend2 i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.chk{display:flex;align-items:center;gap:10px;font-size:15px;margin:4px 0 12px}.chk input{width:22px;height:22px}
 .note{background:var(--soft);border-radius:12px;padding:10px 12px;font-size:14px;color:var(--mute);margin-bottom:12px}
 .note:empty{display:none}
 .day{font-size:13px;color:var(--mute);margin:14px 0 2px;font-weight:600}
@@ -144,7 +150,7 @@ const uidGen=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 
 const DEF={exp:['Продукты','Кафе и рестораны','Авто и бензин','Такси','Аренда жилья','Коммунальные услуги','Алименты','Дом','Связь и интернет','Семья','Здоровье','Одежда','Уход за собой','Подарки','Развлечения','Подписки','Налоги и взносы','Кредиты','Накопления','Другое'],
  inc:['Доход от конторы','Гонорары','Прочие доходы'],extra:0,strategy:'avalanche'};
-const S={settings:{...DEF},loans:[],bills:[],del:{},inboxDone:[],months:{},cur:ymOf(todayISO),tab:'home',q:''};
+const S={settings:{...DEF},loans:[],bills:[],taxes:[],del:{},inboxDone:[],months:{},cur:ymOf(todayISO),tab:'home',q:''};
 let col=null,local=true,loaded=false;
 const queues={};
 const pending=k=>queues[k]&&(queues[k].busy||queues[k].next);
@@ -165,6 +171,7 @@ async function run(key,q){
 function fail(e){note(e&&e.code==='quota_exceeded'?'Хранилище заполнено — удалите старые операции.':'Не удалось сохранить изменение. Проверьте интернет и повторите.')}
 const saveSettings=()=>{S.settings.u=Date.now();save('settings',{...S.settings})};
 const saveDel=()=>save('del',{map:S.del});
+const saveTaxes=()=>save('taxes',{list:S.taxes});
 const saveLoans=()=>save('loans',{list:S.loans});
 const saveMonth=ym=>save('m-'+ym,{tx:S.months[ym]||[]});
 const saveBills=()=>save('bills',{list:S.bills});
@@ -176,6 +183,7 @@ function apply(id,d){
   else if(id==='bills')S.bills=Array.isArray(d.list)?d.list:[];
   else if(id==='del')S.del=d.map||{};
   else if(id==='inbox')S.inboxDone=d.done||[];
+  else if(id==='taxes')S.taxes=Array.isArray(d.list)?d.list:[];
   else if(id.startsWith('m-'))S.months[id.slice(2)]=Array.isArray(d.tx)?d.tx:[];
 }
 function goLocal(){
@@ -229,6 +237,7 @@ function home(){
   <div class="card"><h2>Обязательные платежи месяца</h2>${pay.length?`<p class="lbl" style="margin:-4px 0 6px">Всего ${fmt(due)} · осталось оплатить <b style="color:var(--ink)">${fmt(left)}</b></p>`+pay.map(p=>`<div class="row"><div class="grow">${esc(p.name)}<small>${p.day?p.day+' число · ':''}${fmt(p.amt)}</small></div>${p.paid?`<span class="paid">✓ ${fmt(p.paid)}</span>`:`<button class="btn sm" data-${p.k}="${esc(p.id)}">Оплатить</button>`}</div>`).join(''):'<p class="empty">Добавьте кредиты во вкладке «Долги», а алименты, аренду, коммуналку и налоги — во вкладке «Платежи».</p>'}</div>
   <div class="card"><h2>Куда ушли деньги</h2>${cats.length?cats.map(([c,v])=>`<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px"><span>${esc(c)}</span><span class="amt">${fmt(v)} <small style="display:inline">${Math.round(v/exp*100)}%</small></span></div><div class="bar"><i style="width:${(v/max*100).toFixed(1)}%"></i></div></div>`).join(''):'<p class="empty">Пока нет расходов за этот месяц. Нажмите «+», чтобы записать первый.</p>'}</div>
   <div class="card"><p class="lbl">Общий долг</p><div class="hero" style="font-size:clamp(28px,8vw,36px)">${fmt(debt)}</div>
+   ${taxOweAll(S.cur.slice(0,4))?`<p class="lbl" style="margin-top:6px">Плюс долг по налогам: <b class="neg">${fmt(taxOweAll(S.cur.slice(0,4)))}</b></p>`:''}
    ${plan&&debt>0?`<p class="lbl" style="margin-top:6px">${plan.stuck?'При текущем плане долг не гасится — откройте «План».':'Без долгов: '+afterMonths(plan.m)}</p>`:''}</div>`;
 }
 function ops(){
@@ -249,10 +258,48 @@ function debts(){
    <div style="display:flex;gap:8px">${l.balance>0?`<button class="btn sm primary" data-pay="${esc(l.id)}">Внести платёж</button>`:''}<button class="btn sm" data-loan="${esc(l.id)}">Изменить</button></div></div>`).join(''):'<p class="empty">Добавьте каждый кредит, рассрочку или долг человеку. Остаток берите из приложения банка.</p>'}
    <button class="btn" id="addLoan" style="width:100%;margin-top:12px">+ Добавить кредит или долг</button></div>`;
 }
+const MS3=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+const taxRows=y=>S.taxes.filter(t=>String(t.year)===String(y));
+const cellOf=(t,i)=>(t.m&&t.m[i])||{c:0,p:0};
+const taxOwe=t=>(t.m||[]).reduce((s,x)=>s+Math.max(0,(x&&x.c||0)-(x&&x.p||0)),0);
+const taxOweAll=y=>taxRows(y).reduce((s,t)=>s+taxOwe(t),0);
+function taxCard(y){
+  const rows=taxRows(y);if(!rows.length)return'';
+  const owe=rows.reduce((s,t)=>s+taxOwe(t),0),ch=rows.reduce((s,t)=>s+(t.m||[]).reduce((a,x)=>a+(x&&x.c||0),0),0),pd=rows.reduce((s,t)=>s+(t.m||[]).reduce((a,x)=>a+(x&&x.p||0),0),0);
+  return`<div class="card"><h2>Налоги и взносы ${esc(y)} по месяцам</h2>
+   <div class="two" style="margin-top:0"><div><p class="lbl">Не оплачено</p><b class="${owe?'neg':'pos'}">${fmt(owe)}</b></div><div><p class="lbl">Оплачено из начисленного</p><b>${fmt(pd)}</b><small style="display:block;color:var(--mute);font-size:13px">из ${fmt(ch)}</small></div></div>
+   ${owe?'<p class="lbl" style="margin:8px 0 0">На неоплаченные суммы каждый день начисляется пеня.</p>':''}
+   ${rows.map(t=>{const o=taxOwe(t),dueM=(t.m||[]).map((x,i)=>x&&x.c>(x.p||0)?i:-1).filter(i=>i>=0);
+     return`<div class="loan"><div class="top"><div><b>${esc(t.short||t.name)}</b><small style="display:block;color:var(--mute);font-size:13px">${esc(t.name)}${t.knp?` · КНП ${esc(t.knp)}`:''}${t.pknp?`, пеня ${esc(t.pknp)}`:''}</small></div><div class="bal" style="font-size:19px;${o?'color:var(--acc)':''}">${o?fmt(o):'<span class="paid">✓ всё оплачено</span>'}</div></div>
+     <div class="mgrid">${MS3.map((m,i)=>{const x=cellOf(t,i),cls=!x.c?'':x.p>=x.c?'paid':x.p>0?'part':'due';return`<button class="mc ${cls}" data-tc="${esc(t.id)}|${i}" aria-label="${esc(t.short||t.name)} ${m}">${m}</button>`}).join('')}</div>
+     ${dueM.length?`<p class="lbl" style="margin:0">Не оплачено: ${dueM.map(i=>MS3[i]).join(', ')} (${dueM.length} мес.)</p>`:''}</div>`}).join('')}
+   <div class="legend2" style="margin-top:10px"><span><i style="background:var(--good)"></i>оплачено</span><span><i style="background:var(--acc)"></i>не оплачено</span><span><i style="background:var(--soft);border:1px solid var(--line)"></i>не начислено</span></div>
+   <p class="lbl" style="margin-top:8px">Нажмите на месяц, чтобы отметить оплату или изменить сумму.</p></div>`;
+}
+function taxForm(id,i){
+  const t=S.taxes.find(x=>x.id===id);if(!t)return;const x=cellOf(t,i);F={taxId:id,ti:i,del:false};
+  open(`<h3><span>${esc(t.short||t.name)} — ${MN[i].toLowerCase()} ${esc(t.year)}</span><span class="hb"><button class="btn sm primary" data-do="tS">Сохранить</button><button class="x" aria-label="Закрыть">×</button></span></h3>
+   <p class="lbl" style="margin:-6px 0 12px">${esc(t.name)}${t.knp?` · КНП ${esc(t.knp)}`:''}${t.pknp?` · пеня КНП ${esc(t.pknp)}`:''}</p>
+   <div class="grid2"><label class="f">Начислено, ₸<input id="tC" inputmode="decimal" value="${x.c?NF.format(x.c):''}" placeholder="0"></label>
+   <label class="f">Оплачено, ₸<input id="tP" inputmode="decimal" value="${x.p?NF.format(x.p):''}" placeholder="0"></label></div>
+   <button class="btn" id="tFull" style="width:100%;margin-bottom:12px">Оплачено полностью</button>
+   <label class="chk"><input type="checkbox" id="tTx" checked>Записать оплату как расход сегодня</label>
+   <div class="acts"><p class="ferr" id="fErr"></p><button class="btn primary" id="tS">Сохранить</button></div>`);
+}
+function saveTaxCell(){
+  const t=S.taxes.find(x=>x.id===F.taxId);if(!t)return close();const i=F.ti,old=cellOf(t,i);
+  const c=Math.round(num($('#tC').value)*100)/100,p=Math.round(num($('#tP').value)*100)/100;
+  if(!Array.isArray(t.m))t.m=[];while(t.m.length<12)t.m.push({c:0,p:0});
+  t.m[i]={c,p};t.u=Date.now();saveTaxes();
+  const diff=p-(old.p||0);
+  if(diff>0&&$('#tTx').checked){const tx={id:'tax-'+uidGen(),t:'e',a:diff,c:'Налоги и взносы',d:todayISO,n:`${t.short||t.name} за ${String(i+1).padStart(2,'0')}.${t.year}`,ts:Date.now(),tax:t.id};
+    (S.months[ymOf(todayISO)]||(S.months[ymOf(todayISO)]=[])).push(tx);saveMonth(ymOf(todayISO))}
+  close();render();
+}
 function pays(){
   const y=S.cur.slice(0,4),yt=yearTx(y),avg=S.bills.reduce((s,b)=>s+avgBill(b),0);
   const tax=yt.filter(t=>t.t==='e'&&t.c==='Налоги и взносы'),taxSum=tax.reduce((s,t)=>s+t.a,0);
-  return`<div class="card"><p class="lbl">Обязательные платежи в месяц, в среднем</p><div class="hero">${fmt(avg)}</div>
+  return taxCard(y)+`<div class="card"><p class="lbl">Обязательные платежи в месяц, в среднем</p><div class="hero">${fmt(avg)}</div>
    <p class="lbl" style="margin-top:6px">Без учёта кредитов. Вместе с ними: ${fmt(avg+S.loans.filter(l=>l.balance>0).reduce((s,l)=>s+(l.payment||0),0))}</p></div>
   <div class="card"><h2>Алименты, аренда, коммуналка, налоги</h2>${S.bills.length?S.bills.map(b=>{const py=yt.filter(t=>t.bill===b.id).reduce((s,t)=>s+t.a,0),pn=isDue(b,S.cur)?paidFor(b,S.cur):null;return`<div class="loan"><div class="top"><div><b>${esc(b.name)}</b><small style="display:block;color:var(--mute);font-size:13px">${esc(b.cat||'')}</small></div><div class="bal" style="font-size:20px">${fmt(b.amount)}</div></div>
    <div class="meta"><span>${PER[b.per||'m']}</span>${whenTxt(b)?`<span>${esc(whenTxt(b))}</span>`:''}<span>оплачено за ${y}: ${fmt(py)}</span></div>
@@ -454,6 +501,7 @@ $('#view').addEventListener('click',e=>{
   const p=e.target.closest('[data-pay]');if(p){payForm(p.dataset.pay);return}
   const l=e.target.closest('[data-loan]');if(l){loanForm(l.dataset.loan);return}
   if(e.target.closest('#addLoan')){loanForm();return}
+  const tc=e.target.closest('[data-tc]');if(tc){const[a,b]=tc.dataset.tc.split('|');taxForm(a,+b);return}
   const pb=e.target.closest('[data-paybill]');if(pb){payBill(pb.dataset.paybill);return}
   const bb=e.target.closest('[data-bill]');if(bb){billForm(bb.dataset.bill);return}
   if(e.target.closest('#addBill')){billForm();return}
@@ -476,6 +524,8 @@ sh.addEventListener('click',e=>{
   if(e.target.closest('#lDel'))return delLoan();
   const per=e.target.closest('[data-per]');if(per){F.per=per.dataset.per;paintPer();return}
   if(e.target.closest('#bS'))return saveBill();
+  if(e.target.closest('#tS'))return saveTaxCell();
+  if(e.target.closest('#tFull')){$('#tP').value=$('#tC').value;return}
   if(e.target.closest('#bDel'))return delBill();
   const rm=e.target.closest('[data-rm]');if(rm){const k=rm.dataset.rm;S.settings[k]=S.settings[k].filter(c=>c!==rm.dataset.c);saveSettings();settingsForm();return}
   const ad=e.target.closest('[data-add]');if(ad){const k=ad.dataset.add,inp=$(k==='exp'?'#nE':'#nI'),v=inp.value.trim().slice(0,40);if(v&&!S.settings[k].includes(v)){S.settings[k]=[...S.settings[k].filter(c=>c!=='Другое'),v,...(S.settings[k].includes('Другое')?['Другое']:[])];saveSettings()}settingsForm();return}
@@ -516,13 +566,13 @@ async function g(url,opt={}){
 async function q(query){const r=await g(API+'?'+new URLSearchParams({q:query,fields:'files(id,name,modifiedTime)',pageSize:'500',spaces:'drive'}));return(await r.json()).files||[]}
 const media=async id=>(await g(API+'/'+id+'?alt=media')).json();
 const U=x=>x.u||x.ts||0;
-function toDoc(){return{app:'moi-finansy',v:2,saved:new Date().toISOString(),settings:S.settings,loans:S.loans,bills:S.bills,tx:Object.values(S.months).flat(),del:S.del,inboxDone:S.inboxDone}}
+function toDoc(){return{app:'moi-finansy',v:2,saved:new Date().toISOString(),settings:S.settings,loans:S.loans,bills:S.bills,taxes:S.taxes,tx:Object.values(S.months).flat(),del:S.del,inboxDone:S.inboxDone}}
 function mergeList(a=[],b=[],del){const m=new Map();for(const x of[...a,...b]){if(!x||!x.id)continue;const o=m.get(x.id);if(!o||U(x)>U(o))m.set(x.id,x)}return[...m.values()].filter(x=>!(del[x.id]>=U(x)))}
 function merge(a,b){const del={...(b.del||{})};for(const k in a.del||{})del[k]=Math.max(del[k]||0,a.del[k]);
-  return{...a,settings:((a.settings||{}).u||0)>=((b.settings||{}).u||0)?a.settings:b.settings,loans:mergeList(a.loans,b.loans,del),bills:mergeList(a.bills,b.bills,del),tx:mergeList(a.tx,b.tx,del),del,inboxDone:[...new Set([...(a.inboxDone||[]),...(b.inboxDone||[])])]}}
+  return{...a,settings:((a.settings||{}).u||0)>=((b.settings||{}).u||0)?a.settings:b.settings,loans:mergeList(a.loans,b.loans,del),bills:mergeList(a.bills,b.bills,del),taxes:mergeList(a.taxes,b.taxes,del),tx:mergeList(a.tx,b.tx,del),del,inboxDone:[...new Set([...(a.inboxDone||[]),...(b.inboxDone||[])])]}}
 function persistAll(){try{Object.keys(localStorage).filter(k=>k.startsWith('fin:')).forEach(k=>localStorage.removeItem(k));const w=(k,v)=>localStorage.setItem('fin:'+k,JSON.stringify(v));
-  w('settings',S.settings);w('loans',{list:S.loans});w('bills',{list:S.bills});w('del',{map:S.del});w('inbox',{done:S.inboxDone});for(const ym in S.months)if(S.months[ym].length)w('m-'+ym,{tx:S.months[ym]})}catch(e){}}
-function fromDoc(d){S.settings={...DEF,...(d.settings||{})};S.loans=d.loans||[];S.bills=d.bills||[];S.del=d.del||{};S.inboxDone=d.inboxDone||[];S.months={};
+  w('settings',S.settings);w('loans',{list:S.loans});w('bills',{list:S.bills});w('taxes',{list:S.taxes});w('del',{map:S.del});w('inbox',{done:S.inboxDone});for(const ym in S.months)if(S.months[ym].length)w('m-'+ym,{tx:S.months[ym]})}catch(e){}}
+function fromDoc(d){S.settings={...DEF,...(d.settings||{})};S.loans=d.loans||[];S.bills=d.bills||[];S.taxes=d.taxes||[];S.del=d.del||{};S.inboxDone=d.inboxDone||[];S.months={};
   for(const t of d.tx||[]){if(!t||!t.d)continue;(S.months[ymOf(t.d)]||(S.months[ymOf(t.d)]=[])).push(t)}}
 const findBy=(list,v)=>list.find(x=>x.id===v)||list.find(x=>String(x.name||'').toLowerCase()===String(v||'').toLowerCase());
 function addCat(c,k){if(c&&!S.settings[k].includes(c)){const L=S.settings[k].filter(x=>x!=='Другое');S.settings[k]=[...L,c,...(S.settings[k].includes('Другое')?['Другое']:[])];S.settings.u=Date.now()}}
@@ -537,6 +587,7 @@ function applyInbox(items){
       (S.months[ymOf(t.d)]||(S.months[ymOf(t.d)]=[])).push(t);n++}
     else if(it.type==='loan'||it.type==='bill'){const L=it.type==='loan'?S.loans:S.bills;const ex=findBy(L,it.id||it.name);
       const o={...it};delete o.type;o.u=now;if(ex)Object.assign(ex,o,{id:ex.id});else{o.id=String(o.id||uidGen());L.push(o)}n++}
+    else if(it.type==='tax'&&it.id){const o={...it};delete o.type;o.u=now;const ex=S.taxes.find(x=>x.id===it.id);if(ex)Object.assign(ex,o);else S.taxes.push(o);n++}
     else if(it.type==='del'&&it.id){S.del[it.id]=now;n++}}
   return n;
 }

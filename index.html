@@ -241,6 +241,24 @@ function jarGoalForm(){
    <p class="lbl" style="margin:-4px 0 12px">Рекомендация: сумма обязательных платежей за 1 месяц.</p>
    <div class="acts"><button class="btn primary" id="jgS">Сохранить</button></div>`);
 }
+function cashNow(){const c=S.settings.cash;if(!c||c.at==null)return null;const ad=new Date(c.at),aiso=`${ad.getFullYear()}-${pad(ad.getMonth()+1)}-${pad(ad.getDate())}`;
+  return c.a+allTx().filter(t=>(t.ts||0)>c.at&&t.d>=aiso).reduce((s,t)=>s+(t.t==='i'?t.a:-t.a),0)}
+function cashCard(){
+  const v=cashNow(),c=S.settings.cash;
+  if(v===null)return`<div class="card"><h2>Деньги сейчас</h2><p class="empty">Укажите, сколько у вас сейчас денег на карте и наличными. Дальше приложение само будет пересчитывать по вашим доходам и расходам.</p><button class="btn primary" data-cash style="width:100%;margin-top:10px">Указать сумму</button></div>`;
+  const d=new Date(c.at);
+  return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><p class="lbl" style="margin:0">Деньги сейчас</p><button class="btn sm" data-cash>Сверить с картой</button></div>
+   <div class="hero ${v<0?'neg':''}" style="margin-top:6px">${fmt(v)}</div>
+   <p class="lbl" style="margin-top:6px">Сверено ${d.toLocaleDateString('ru-RU')} в ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}: ${fmt(c.a)}, дальше — по записанным операциям.</p></div>`;
+}
+function cashForm(){
+  const v=cashNow();F={};
+  open(`<h3><span>Сколько денег сейчас</span><span class="hb"><button class="btn sm primary" data-do="cS">Сохранить</button><button class="x" aria-label="Закрыть">×</button></span></h3>
+   <input class="big" id="cA" inputmode="decimal" placeholder="0 ₸" value="${v!==null?NF.format(Math.round(v)):''}" aria-label="Сумма">
+   <p class="lbl" style="margin:-6px 0 12px">Посмотрите баланс в Kaspi и других картах, прибавьте наличные. Запас, отложенный отдельно, сюда не включайте.${v!==null?' Если цифра в приложении расходится с реальной — значит, какие-то траты не записаны; сверка это исправит.':''}</p>
+   <div class="acts"><button class="btn primary" id="cS">Сохранить</button></div>`);
+  setTimeout(()=>$('#cA')?.focus(),60);
+}
 function home(){
   const tx=txOf(S.cur),isJ=t=>(t.t==='e'&&t.c===JAR_IN)||(t.t==='i'&&t.c===JAR_OUT),inc=tx.filter(t=>t.t==='i'&&!isJ(t)).reduce((s,t)=>s+t.a,0),exp=tx.filter(t=>t.t==='e'&&!isJ(t)).reduce((s,t)=>s+t.a,0),jn=tx.filter(isJ).reduce((s,t)=>s+(t.t==='e'?t.a:-t.a),0),bal=inc-exp-jn;
   const by={};tx.filter(t=>t.t==='e'&&!isJ(t)).forEach(t=>by[t.c]=(by[t.c]||0)+t.a);
@@ -249,8 +267,8 @@ function home(){
     ...S.bills.filter(b=>isDue(b,S.cur)).map(b=>({k:'paybill',id:b.id,name:b.name,day:b.day,amt:b.amount||0,paid:paidFor(b,S.cur)}))].sort((a,b)=>(a.day||99)-(b.day||99));
   const due=pay.reduce((s,p)=>s+p.amt,0),left=pay.filter(p=>!p.paid).reduce((s,p)=>s+p.amt,0);
   const debt=totalDebt(),plan=S.loans.length?sim(S.settings.extra||0,S.settings.strategy,true):null;
-  return bkBanner()+monthNav()+`
-  <div class="card"><p class="lbl">Остаток за месяц</p><div class="hero ${bal<0?'neg':''}">${bal>0?'+':''}${fmt(bal)}</div>
+  return bkBanner()+cashCard()+monthNav()+`
+  <div class="card"><p class="lbl">Доходы минус расходы за месяц</p><div class="hero ${bal<0?'neg':''}">${bal>0?'+':''}${fmt(bal)}</div>
    <div class="two"><div><p class="lbl">Доходы</p><b class="pos">${fmt(inc)}</b></div><div><p class="lbl">Расходы</p><b>${fmt(exp)}</b></div></div>${jn?`<p class="lbl" style="margin-top:8px">${jn>0?'Отложено в запас':'Взято из запаса'} за месяц: ${fmt(Math.abs(jn))}</p>`:''}</div>
   ${jarCard()}
   <div class="card"><h2>Обязательные платежи месяца</h2>${pay.length?`<p class="lbl" style="margin:-4px 0 6px">Всего ${fmt(due)} · осталось оплатить <b style="color:var(--ink)">${fmt(left)}</b></p>`+pay.map(p=>`<div class="row"><div class="grow">${esc(p.name)}<small>${p.day?p.day+' число · ':''}${fmt(p.amt)}</small></div>${p.paid?`<span class="paid">✓ ${fmt(p.paid)}</span>`:`<button class="btn sm" data-${p.k}="${esc(p.id)}">Оплатить</button>`}</div>`).join(''):'<p class="empty">Добавьте кредиты во вкладке «Долги», а алименты, аренду, коммуналку и налоги — во вкладке «Платежи».</p>'}</div>
@@ -522,6 +540,7 @@ $('#view').addEventListener('click',e=>{
   if(e.target.closest('#addLoan')){loanForm();return}
   const jr=e.target.closest('[data-jar]');if(jr){const out=jr.dataset.jar==='out';if(out&&!S.settings.inc.includes(JAR_OUT)){addCat(JAR_OUT,'inc');saveSettings()}txForm({t:out?'i':'e',c:out?JAR_OUT:JAR_IN});return}
   if(e.target.closest('[data-jargoal]')){jarGoalForm();return}
+  if(e.target.closest('[data-cash]')){cashForm();return}
   const tc=e.target.closest('[data-tc]');if(tc){const[a,b]=tc.dataset.tc.split('|');taxForm(a,+b);return}
   const pb=e.target.closest('[data-paybill]');if(pb){payBill(pb.dataset.paybill);return}
   const bb=e.target.closest('[data-bill]');if(bb){billForm(bb.dataset.bill);return}
@@ -546,6 +565,7 @@ sh.addEventListener('click',e=>{
   const per=e.target.closest('[data-per]');if(per){F.per=per.dataset.per;paintPer();return}
   if(e.target.closest('#bS'))return saveBill();
   if(e.target.closest('#tS'))return saveTaxCell();
+  if(e.target.closest('#cS')){const v=num($('#cA').value);S.settings.cash={a:Math.round(v*100)/100,at:Date.now()};saveSettings();close();render();return}
   if(e.target.closest('#jgS')){const v=Math.round(num($('#jgA').value));if(v>0){S.settings.jarGoal=v;saveSettings()}close();render();return}
   if(e.target.closest('#tFull')){$('#tP').value=$('#tC').value;return}
   if(e.target.closest('#bDel'))return delBill();
@@ -610,6 +630,7 @@ function applyInbox(items){
     else if(it.type==='loan'||it.type==='bill'){const L=it.type==='loan'?S.loans:S.bills;const ex=findBy(L,it.id||it.name);
       const o={...it};delete o.type;o.u=now;if(ex)Object.assign(ex,o,{id:ex.id});else{o.id=String(o.id||uidGen());L.push(o)}n++}
     else if(it.type==='tax'&&it.id){const o={...it};delete o.type;o.u=now;const ex=S.taxes.find(x=>x.id===it.id);if(ex)Object.assign(ex,o);else S.taxes.push(o);n++}
+    else if(it.type==='cash'&&it.a!=null){S.settings.cash={a:num(it.a),at:+new Date(it.at||now)};S.settings.u=now;n++}
     else if(it.type==='del'&&it.id){S.del[it.id]=now;n++}}
   return n;
 }

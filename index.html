@@ -241,24 +241,33 @@ function jarGoalForm(){
    <p class="lbl" style="margin:-4px 0 12px">Рекомендация: сумма обязательных платежей за 1 месяц.</p>
    <div class="acts"><button class="btn primary" id="jgS">Сохранить</button></div>`);
 }
-function cashNow(){const c=S.settings.cash;if(!c||c.at==null)return null;const ad=new Date(c.at),aiso=`${ad.getFullYear()}-${pad(ad.getMonth()+1)}-${pad(ad.getDate())}`;
-  return c.a+allTx().filter(t=>(t.ts||0)>c.at&&t.d>=aiso).reduce((s,t)=>s+(t.t==='i'?t.a:-t.a),0)}
+function accs(){const st=S.settings;if((!st.accounts||!st.accounts.length)&&st.cash&&st.cash.at!=null)st.accounts=[{id:'kaspi',name:'Kaspi',a:st.cash.a,at:st.cash.at}];return st.accounts||[]}
+const defAcc=()=>(accs()[0]||{}).id||'';
+const isoOf=ms=>{const d=new Date(ms);return`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+function accBal(a){const first=defAcc(),aiso=isoOf(a.at);return a.a+allTx().filter(t=>(t.acc||first)===a.id&&(t.ts||0)>a.at&&t.d>=aiso).reduce((s,t)=>s+(t.t==='i'?t.a:-t.a),0)}
 function cashCard(){
-  const v=cashNow(),c=S.settings.cash;
-  if(v===null)return`<div class="card"><h2>Деньги сейчас</h2><p class="empty">Укажите, сколько у вас сейчас денег на карте и наличными. Дальше приложение само будет пересчитывать по вашим доходам и расходам.</p><button class="btn primary" data-cash style="width:100%;margin-top:10px">Указать сумму</button></div>`;
-  const d=new Date(c.at);
-  return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><p class="lbl" style="margin:0">Деньги сейчас</p><button class="btn sm" data-cash>Сверить с картой</button></div>
-   <div class="hero ${v<0?'neg':''}" style="margin-top:6px">${fmt(v)}</div>
-   <p class="lbl" style="margin-top:6px">Сверено ${d.toLocaleDateString('ru-RU')} в ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}: ${fmt(c.a)}, дальше — по записанным операциям.</p></div>`;
+  const L=accs();
+  if(!L.length)return`<div class="card"><h2>Деньги сейчас</h2><p class="empty">Укажите, сколько денег у вас на каждой карте и наличными. Дальше приложение само будет пересчитывать по вашим доходам и расходам.</p><button class="btn primary" data-accnew style="width:100%;margin-top:10px">Добавить счёт</button></div>`;
+  const tot=L.reduce((s,a)=>s+accBal(a),0);
+  return`<div class="card"><p class="lbl">Деньги сейчас, всего</p><div class="hero ${tot<0?'neg':''}">${fmt(tot)}</div>
+   ${L.map(a=>{const v=accBal(a);return`<div class="row" data-acc="${esc(a.id)}" style="cursor:pointer"><div class="grow">${esc(a.name)}<small>сверено ${new Date(a.at).toLocaleDateString('ru-RU')} · нажмите, чтобы сверить</small></div><span class="amt ${v<0?'neg':''}">${fmt(v)}</span></div>`}).join('')}
+   <button class="btn sm" data-accnew style="margin-top:8px">+ Счёт</button></div>`;
 }
-function cashForm(){
-  const v=cashNow();F={};
-  open(`<h3><span>Сколько денег сейчас</span><span class="hb"><button class="btn sm primary" data-do="cS">Сохранить</button><button class="x" aria-label="Закрыть">×</button></span></h3>
-   <input class="big" id="cA" inputmode="decimal" placeholder="0 ₸" value="${v!==null?NF.format(Math.round(v)):''}" aria-label="Сумма">
-   <p class="lbl" style="margin:-6px 0 12px">Посмотрите баланс в Kaspi и других картах, прибавьте наличные. Запас, отложенный отдельно, сюда не включайте.${v!==null?' Если цифра в приложении расходится с реальной — значит, какие-то траты не записаны; сверка это исправит.':''}</p>
-   <div class="acts"><button class="btn primary" id="cS">Сохранить</button></div>`);
-  setTimeout(()=>$('#cA')?.focus(),60);
+function accForm(id){
+  const a=accs().find(x=>x.id===id);F={accId:id||null,del:false};
+  open(`<h3><span>${a?esc(a.name)+': сколько сейчас':'Новый счёт'}</span><span class="hb"><button class="btn sm primary" data-do="aS">Сохранить</button><button class="x" aria-label="Закрыть">×</button></span></h3>
+   ${a?'':'<label class="f">Название<input id="aN" placeholder="Например: Halyk, наличные"></label>'}
+   <input class="big" id="aA" inputmode="decimal" placeholder="0 ₸" value="${a?NF.format(Math.round(accBal(a))):''}" aria-label="Сумма">
+   <p class="lbl" style="margin:-6px 0 12px">Впишите реальный баланс из приложения банка.${a?' Если цифра расходится — значит, какие-то траты не записаны; сверка это исправит.':''}</p>
+   <div class="acts">${a&&accs().length>1?'<button class="btn danger" id="aDel">Удалить</button>':''}<button class="btn primary" id="aS">Сохранить</button></div>`);
 }
+function saveAcc(){
+  const L=accs(),v=Math.round(num($('#aA').value)*100)/100;
+  if(F.accId){const a=L.find(x=>x.id===F.accId);a.a=v;a.at=Date.now()}
+  else{const nm=$('#aN').value.trim();if(!nm){$('#aN').focus();return}L.push({id:'acc-'+uidGen(),name:nm.slice(0,30),a:v,at:Date.now()})}
+  S.settings.accounts=L;delete S.settings.cash;saveSettings();close();render();
+}
+function delAcc(){const b=$('#aDel');if(!F.del){F.del=true;b.textContent='Точно удалить?';return}S.settings.accounts=accs().filter(x=>x.id!==F.accId);saveSettings();close();render()}
 function home(){
   const tx=txOf(S.cur),isJ=t=>(t.t==='e'&&t.c===JAR_IN)||(t.t==='i'&&t.c===JAR_OUT),inc=tx.filter(t=>t.t==='i'&&!isJ(t)).reduce((s,t)=>s+t.a,0),exp=tx.filter(t=>t.t==='e'&&!isJ(t)).reduce((s,t)=>s+t.a,0),jn=tx.filter(isJ).reduce((s,t)=>s+(t.t==='e'?t.a:-t.a),0),bal=inc-exp-jn;
   const by={};tx.filter(t=>t.t==='e'&&!isJ(t)).forEach(t=>by[t.c]=(by[t.c]||0)+t.a);
@@ -398,7 +407,7 @@ let F=null;
 function findTx(id){for(const ym in S.months){const t=S.months[ym].find(x=>x.id===id);if(t)return{t,ym}}return null}
 function txForm(opts={}){
   const ed=opts.id?findTx(opts.id):null,t=ed?ed.t:null;
-  F={id:t?.id||null,ym:ed?.ym||null,t:t?.t||opts.t||'e',c:t?.c||opts.c||'',loan:t?.loan||opts.loan||'',bill:t?.bill||opts.bill||'',p:t?.p??null,del:false};
+  F={id:t?.id||null,ym:ed?.ym||null,t:t?.t||opts.t||'e',c:t?.c||opts.c||'',loan:t?.loan||opts.loan||'',bill:t?.bill||opts.bill||'',p:t?.p??null,acc:t?.acc||defAcc(),del:false};
   const l=S.loans.find(x=>x.id===F.loan);
   const a=t?t.a:(opts.a||''),pp=t?.p??(l?Math.max(0,(opts.a||0)-l.balance*(l.rate||0)/1200):'');
   const bl=S.bills.find(b=>b.id===F.bill);
@@ -407,6 +416,7 @@ function txForm(opts={}){
    <input class="big" id="fA" inputmode="decimal" placeholder="0 ₸" value="${a?NF.format(a):''}" aria-label="Сумма">
    <div class="chips" id="fC"></div>
    <div id="fL"></div>
+   ${accs().length>1?`<p class="lbl" style="margin:0 0 6px">Счёт</p><div class="chips">${accs().map(a=>`<button data-facc="${esc(a.id)}" class="${a.id===F.acc?'on':''}">${esc(a.name)}</button>`).join('')}</div>`:''}
    <div class="grid2"><label class="f">Дата<input type="date" id="fD" value="${t?.d||todayISO}"></label><label class="f">Комментарий<input id="fN" value="${esc(t?.n||'')}" placeholder="необязательно"></label></div>
    <div class="acts"><p class="ferr" id="fErr" role="alert"></p>${t?'<button class="btn danger" id="fDel">Удалить</button>':''}<button class="btn primary" id="fS">Сохранить</button></div>`);
   F.pInit=pp;paintForm();if(!t)setTimeout(()=>$('#fA')?.focus(),60);
@@ -432,7 +442,7 @@ function saveTx0(){
   const loan=isLoan?($('#fLs')?.value||''):'',p=loan?num($('#fP')?.value):0;
   let touched=false;
   if(F.id){const o=findTx(F.id);if(o){if(o.t.loan&&o.t.p){applyP(o.t.loan,o.t.p,1);touched=true}S.months[o.ym]=S.months[o.ym].filter(x=>x.id!==F.id);saveMonth(o.ym)}}
-  const tx={id:F.id||uidGen(),t:F.t,a,c:F.c,d,n:$('#fN').value.trim(),ts:Date.now()};
+  const tx={id:F.id||uidGen(),t:F.t,a,c:F.c,d,n:$('#fN').value.trim(),ts:Date.now()};if(F.acc)tx.acc=F.acc;
   if(loan){tx.loan=loan;tx.p=p;applyP(loan,p,-1);touched=true}
   if(F.bill&&F.t==='e')tx.bill=F.bill;
   (S.months[ym]||(S.months[ym]=[])).push(tx);saveMonth(ym);if(touched)saveLoans();
@@ -540,7 +550,8 @@ $('#view').addEventListener('click',e=>{
   if(e.target.closest('#addLoan')){loanForm();return}
   const jr=e.target.closest('[data-jar]');if(jr){const out=jr.dataset.jar==='out';if(out&&!S.settings.inc.includes(JAR_OUT)){addCat(JAR_OUT,'inc');saveSettings()}txForm({t:out?'i':'e',c:out?JAR_OUT:JAR_IN});return}
   if(e.target.closest('[data-jargoal]')){jarGoalForm();return}
-  if(e.target.closest('[data-cash]')){cashForm();return}
+  const ac=e.target.closest('[data-acc]');if(ac){accForm(ac.dataset.acc);return}
+  if(e.target.closest('[data-accnew]')){accForm();return}
   const tc=e.target.closest('[data-tc]');if(tc){const[a,b]=tc.dataset.tc.split('|');taxForm(a,+b);return}
   const pb=e.target.closest('[data-paybill]');if(pb){payBill(pb.dataset.paybill);return}
   const bb=e.target.closest('[data-bill]');if(bb){billForm(bb.dataset.bill);return}
@@ -565,7 +576,9 @@ sh.addEventListener('click',e=>{
   const per=e.target.closest('[data-per]');if(per){F.per=per.dataset.per;paintPer();return}
   if(e.target.closest('#bS'))return saveBill();
   if(e.target.closest('#tS'))return saveTaxCell();
-  if(e.target.closest('#cS')){const v=num($('#cA').value);S.settings.cash={a:Math.round(v*100)/100,at:Date.now()};saveSettings();close();render();return}
+  if(e.target.closest('#aS'))return saveAcc();
+  if(e.target.closest('#aDel'))return delAcc();
+  const ach=e.target.closest('[data-facc]');if(ach){F.acc=ach.dataset.facc;sh.querySelectorAll('[data-facc]').forEach(b=>b.classList.toggle('on',b.dataset.facc===F.acc));return}
   if(e.target.closest('#jgS')){const v=Math.round(num($('#jgA').value));if(v>0){S.settings.jarGoal=v;saveSettings()}close();render();return}
   if(e.target.closest('#tFull')){$('#tP').value=$('#tC').value;return}
   if(e.target.closest('#bDel'))return delBill();
@@ -626,11 +639,13 @@ function applyInbox(items){
       addCat(t.c,t.t==='i'?'inc':'exp');
       if(it.loan){const l=findBy(S.loans,it.loan);if(l){t.loan=l.id;t.p=num(it.p);if(t.p){l.balance=Math.max(0,l.balance-t.p);l.u=now}}}
       if(it.bill){const b=findBy(S.bills,it.bill);if(b)t.bill=b.id}
+      if(it.acc){const ac=findBy(accs(),it.acc);if(ac)t.acc=ac.id}
       (S.months[ymOf(t.d)]||(S.months[ymOf(t.d)]=[])).push(t);n++}
     else if(it.type==='loan'||it.type==='bill'){const L=it.type==='loan'?S.loans:S.bills;const ex=findBy(L,it.id||it.name);
       const o={...it};delete o.type;o.u=now;if(ex)Object.assign(ex,o,{id:ex.id});else{o.id=String(o.id||uidGen());L.push(o)}n++}
     else if(it.type==='tax'&&it.id){const o={...it};delete o.type;o.u=now;const ex=S.taxes.find(x=>x.id===it.id);if(ex)Object.assign(ex,o);else S.taxes.push(o);n++}
-    else if(it.type==='cash'&&it.a!=null){S.settings.cash={a:num(it.a),at:+new Date(it.at||now)};S.settings.u=now;n++}
+    else if((it.type==='account'||it.type==='cash')&&it.a!=null){const L=accs(),id=String(it.id||'kaspi'),ex=L.find(x=>x.id===id||x.name.toLowerCase()===String(it.name||'').toLowerCase()),at=+new Date(it.at||now);
+      if(ex){ex.a=num(it.a);ex.at=at;if(it.name)ex.name=String(it.name)}else L.push({id,name:String(it.name||'Kaspi'),a:num(it.a),at});S.settings.accounts=L;delete S.settings.cash;S.settings.u=now;n++}
     else if(it.type==='del'&&it.id){S.del[it.id]=now;n++}}
   return n;
 }
@@ -680,7 +695,9 @@ function sheet(rows,widths){const ws=XLSX.utils.aoa_to_sheet(rows);if(widths)ws[
 function bookFinance(){
   const wb=XLSX.utils.book_new(),tx=Object.values(S.months).flat().filter(t=>t&&t.d).sort((a,b)=>a.d.localeCompare(b.d)||(a.ts||0)-(b.ts||0));
   const loanName=id=>(S.loans.find(l=>l.id===id)||{}).name||'';
-  XLSX.utils.book_append_sheet(wb,sheet([['Дата','Месяц','Тип','Категория','Сумма, ₸','Комментарий','Кредит']].concat(tx.map(t=>[ruDate(t.d),ymLabel(ymOf(t.d)),t.t==='i'?'Доход':'Расход',t.c,r2(t.a),t.n||'',t.loan?loanName(t.loan):''])),[12,16,9,22,13,40,26]),'Операции');
+  const accName=id=>(accs().find(a=>a.id===(id||defAcc()))||{}).name||'';
+  XLSX.utils.book_append_sheet(wb,sheet([['Дата','Месяц','Тип','Категория','Сумма, ₸','Счёт','Комментарий','Кредит']].concat(tx.map(t=>[ruDate(t.d),ymLabel(ymOf(t.d)),t.t==='i'?'Доход':'Расход',t.c,r2(t.a),accName(t.acc),t.n||'',t.loan?loanName(t.loan):''])),[12,16,9,22,13,12,40,26]),'Операции');
+  XLSX.utils.book_append_sheet(wb,sheet([['Счёт','Баланс сейчас, ₸','Сверено']].concat(accs().map(a=>[a.name,r2(accBal(a)),new Date(a.at).toLocaleString('ru-RU')])).concat([['Итого',r2(accs().reduce((s,a)=>s+accBal(a),0)),'']]),[18,16,20]),'Деньги сейчас');
   const yms=[...new Set(tx.map(t=>ymOf(t.d)))].sort();
   const mrows=yms.map(ym=>{const isJ=t=>(t.t==='e'&&t.c===JAR_IN)||(t.t==='i'&&t.c===JAR_OUT),L=tx.filter(t=>ymOf(t.d)===ym),i=L.filter(t=>t.t==='i'&&!isJ(t)).reduce((s,t)=>s+t.a,0),e=L.filter(t=>t.t==='e'&&!isJ(t)).reduce((s,t)=>s+t.a,0),j=L.filter(isJ).reduce((s,t)=>s+(t.t==='e'?t.a:-t.a),0);return[ymLabel(ym),r2(i),r2(e),r2(j),r2(i-e-j)]});
   XLSX.utils.book_append_sheet(wb,sheet([['Месяц','Доходы, ₸','Расходы, ₸','В запас, ₸','Остаток, ₸']].concat(mrows),[16,14,14,12,14]),'Итоги по месяцам');
